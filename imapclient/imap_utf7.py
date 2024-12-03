@@ -23,7 +23,10 @@ def encode(s: Union[str, bytes]) -> bytes:
                 utf7_buffer = bytearray()
             result.extend(char.encode('ascii'))
         else:
-            utf7_buffer.extend(char.encode('utf-16be'))
+            if char == '&':
+                result.extend(b'&-')
+            else:
+                utf7_buffer.extend(char.encode('utf-16be'))
     
     if utf7_buffer:
         result.extend(b'&' + base64.b64encode(utf7_buffer).rstrip(b'=').replace(b'/', b',') + b'-')
@@ -54,6 +57,8 @@ def decode(s: Union[bytes, str]) -> str:
                 if utf7_buffer:
                     utf7_bytes = base64.b64decode(utf7_buffer.replace(b',', b'/') + b'===')
                     result.append(utf7_bytes.decode('utf-16be'))
+                else:
+                    result.append('&')
                 in_utf7 = False
                 utf7_buffer = bytearray()
             else:
