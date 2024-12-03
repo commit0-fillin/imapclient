@@ -22,4 +22,10 @@ class FixedOffset(datetime.tzinfo):
         """Return a FixedOffset instance for the current working timezone and
         DST conditions.
         """
-        pass
+        local_time = time.localtime()
+        if local_time.tm_isdst and time.daylight:
+            offset_seconds = -time.altzone
+        else:
+            offset_seconds = -time.timezone
+        offset_minutes = offset_seconds // 60
+        return cls(offset_minutes)
