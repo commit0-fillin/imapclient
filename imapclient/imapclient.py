@@ -106,7 +106,15 @@ class Quota:
 
 def require_capability(capability):
     """Decorator raising CapabilityError when a capability is not available."""
-    pass
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            if not self.has_capability(capability):
+                raise exceptions.CapabilityError(
+                    f"{func.__name__} requires {capability} capability")
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator
 
 class IMAPClient:
     """A connection to the IMAP server specified by *host* is made when
@@ -223,7 +231,7 @@ class IMAPClient:
            This includes reading from and writing to the socket,
            as they are likely to break internal bookkeeping of messages.
         """
-        pass
+        return self._imap.socket()
 
     @require_capability('STARTTLS')
     def starttls(self, ssl_context=None):
@@ -243,7 +251,24 @@ class IMAPClient:
         Raises :py:exc:`AbortError` if the server does not support STARTTLS
         or an SSL connection is already established.
         """
-        pass
+        if self.ssl:
+            raise self.AbortError('SSL connection already established')
+
+        if ssl_context is None:
+            ssl_context = ssl_lib.create_default_context()
+
+        typ, data = self._imap._simple_command('STARTTLS')
+        self._checkok('starttls', typ, data)
+
+        self._imap.sock = ssl_context.wrap_socket(self._imap.sock,
+                                                  server_hostname=self.host)
+        self._imap.file = self._imap.sock.makefile('rb')
+        self.ssl = True
+        self._starttls_done = True
+
+        # Recheck capabilities as they may have changed
+        self._cached_capabilities = None
+        self.capabilities()
 
     def login(self, username: str, password: str):
         """Login using *username* and *password*, returning the
