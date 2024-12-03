@@ -21,7 +21,21 @@ def parse_response(data: List[bytes]) -> Tuple[_Atom, ...]:
 
     Returns nested tuples of appropriately typed objects.
     """
-    pass
+    lexer = TokenSource(data)
+    parsed = []
+    for token in lexer:
+        if token == b'(':
+            parsed.append(parse_response(lexer))
+        elif token == b')':
+            return tuple(parsed)
+        elif isinstance(token, bytes):
+            try:
+                parsed.append(token.decode('ascii'))
+            except UnicodeDecodeError:
+                parsed.append(token)
+        else:
+            parsed.append(token)
+    return tuple(parsed)
 _msg_id_pattern = re.compile('(\\d+(?: +\\d+)*)')
 
 def parse_message_list(data: List[Union[bytes, str]]) -> SearchIds:
@@ -35,7 +49,19 @@ def parse_message_list(data: List[Union[bytes, str]]) -> SearchIds:
     attribute which contains the MODSEQ response (if returned by the
     server).
     """
-    pass
+    data = [item.decode('ascii') if isinstance(item, bytes) else item for item in data]
+    data = ' '.join(data)
+    
+    modseq = None
+    if 'MODSEQ' in data:
+        modseq_index = data.index('MODSEQ')
+        modseq = int(data[modseq_index + 1])
+        data = data[:modseq_index]
+    
+    ids = [int(num) for num in _msg_id_pattern.findall(data)]
+    search_ids = SearchIds(ids)
+    search_ids.modseq = modseq
+    return search_ids
 _ParseFetchResponseInnerDict = Dict[bytes, Optional[Union[datetime.datetime, int, BodyData, Envelope, _Atom]]]
 
 def parse_fetch_response(text: List[bytes], normalise_times: bool=True, uid_is_key: bool=True) -> 'defaultdict[int, _ParseFetchResponseInnerDict]':
@@ -44,4 +70,33 @@ def parse_fetch_response(text: List[bytes], normalise_times: bool=True, uid_is_k
     Returns a dictionary, keyed by message ID. Each value a dictionary
     keyed by FETCH field type (eg."RFC822").
     """
-    pass
+    response = defaultdict(dict)
+    current_key = None
+
+    for token in parse_response(text):
+        if isinstance(token, tuple):
+            token_key, token_value = token[:2]
+            token_key = token_key.upper()
+
+            if token_key == b'UID':
+                current_key = int(token_value)
+                if uid_is_key:
+                    response[current_key]['SEQ'] = int(response[current_key].get('SEQ', 0))
+                else:
+                    current_key = response[current_key].get('SEQ', 0)
+            elif token_key == b'INTERNALDATE':
+                response[current_key][token_key] = parse_to_datetime(token_value, normalise=normalise_times)
+            elif token_key in (b'RFC822.SIZE', b'SIZE'):
+                response[current_key][token_key] = int(token_value)
+            elif token_key == b'ENVELOPE':
+                response[current_key][token_key] = Envelope(*token_value)
+            elif token_key == b'BODY' and isinstance(token_value, tuple):
+                response[current_key][b'BODY'] = BodyData(*token_value)
+            else:
+                response[current_key][token_key] = token_value
+        elif isinstance(token, int):
+            current_key = token
+            if not uid_is_key:
+                response[current_key]['UID'] = response[current_key].get('UID', 0)
+
+    return response
